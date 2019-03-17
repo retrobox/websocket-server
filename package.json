@@ -1,0 +1,30 @@
+{
+  "name": "retrobox-websocker-server",
+  "version": "0.0.1",
+  "description": "Websocket server for retrobox project",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/retrobox/websocket-server.git"
+  },
+  "keywords": [
+    "websocket",
+    "retrobox"
+  ],
+  "author": "Thingmill <contact@thingmill.fr>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/retrobox/websocket-server/issues"
+  },
+  "homepage": "https://github.com/retrobox/websocket-server#readme",
+  "dependencies": {
+    "dotenv": "^7.0.0",
+    "express": "^4.16.4",
+    "socket.io": "^2.2.0",
+    "uuid": "^3.3.2"
+  }
+}
