@@ -2,13 +2,16 @@ const dotenv = require('dotenv')
 const uuid = require('uuid')
 dotenv.config()
 
+let httpServerHost = process.env.HOST !== undefined ? process.env.HOST : '0.0.0.0'
 let httpServerPort = process.env.PORT !== undefined ? process.env.PORT : 3008
 
 const express = require('express')();
 const server = require('http').Server(express);
 const io = require('socket.io')(server);
 
-server.listen(httpServerPort);
+server.listen(httpServerPort, '0.0.0.0', () => {
+    console.log('listening on http://' + httpServerHost + ':' + httpServerPort)
+});
 
 let connectedClients = []
 
@@ -35,6 +38,9 @@ io.on('connection', function (socket) {
 
     socket.on('disconnect', function () {
         console.log('disconnected')
+        connectedClients = connectedClients.filter(client => {
+            return client.socketId !== socket.id
+        })
     });
 });
 
@@ -50,6 +56,7 @@ express.get('/connections', (req, res) => {
 
 
 function connectConsole(req, res) {
+    console.log(connectedClients)
     let sockets = connectedClients.filter(c => c.consoleId === req.params.id)
     if (sockets.length === 0) {
         return res.json({
