@@ -56,12 +56,11 @@ express.get('/connections', (req, res) => {
 
 
 function connectConsole(req, res) {
-    console.log(connectedClients)
     let sockets = connectedClients.filter(c => c.consoleId === req.params.id)
     if (sockets.length === 0) {
         return res.json({
             success: false,
-            errors: ['console not connected at the time']
+            errors: ['console not found or not connected at the time']
         })
     }
     let socketId = sockets[0].socketId
@@ -89,10 +88,10 @@ express.get('/console/:id', (req, res) => {
     })
 });
 
-express.get('/console/:id/wifi', (req, res) => {
+express.get('/console/:id/ping', (req, res) => {
     let socket = connectConsole(req, res)
-
-    socket.emit('get-wifi', (data) => {
+    socket.emit('ping', (data) => {
+        // wait for a response
         return res.json({
             success: true,
             data: data
