@@ -90,11 +90,27 @@ express.get('/console/:id', (req, res) => {
 
 express.get('/console/:id/ping', (req, res) => {
     let socket = connectConsole(req, res)
-    socket.emit('ping', (data) => {
+    socket.emit('ping-check', (data) => {
         // wait for a response
         return res.json({
             success: true,
             data: data
         })
+    })
+});
+
+express.get('/console/:id/shutdown', (req, res) => {
+    let socket = connectConsole(req, res)
+    socket.emit('shutdown')
+    return res.json({
+        success: true
+    })
+});
+
+express.get('/console/:id/reboot', (req, res) => {
+    let socket = connectConsole(req, res)
+    socket.emit('reboot')
+    return res.json({
+        success: true
     })
 });
