@@ -143,6 +143,12 @@ express.get('/connections', (req, res) => {
     })
 })
 
+express.get('/ping', (req, res) => {
+    return res.json({
+        success: true,
+        result: 'pong'
+    })
+})
 
 function connectConsole(req, res) {
     let sockets = connectedClients.filter(c => c.consoleId === req.params.id)
