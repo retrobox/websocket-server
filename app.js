@@ -7,19 +7,37 @@ let httpServerPort = process.env.PORT !== undefined ? process.env.PORT : 3008
 
 const express = require('express')();
 const server = require('http').Server(express);
-const io = require('socket.io')(server);
+const io = require('socket.io')(server,  {
+    handlePreflightRequest: function (req, res) {
+      var headers = {
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-client-type',
+        'Access-Control-Allow-Origin': req.headers.origin,
+        'Access-Control-Allow-Credentials': true
+      };
+      res.writeHead(200, headers);
+      res.end();
+    }
+  });
+const bodyParser = require('body-parser');
 
-server.listen(httpServerPort, '0.0.0.0', () => {
+const jwt = require('jsonwebtoken');
+
+express.use(bodyParser.json());
+
+server.listen(httpServerPort, httpServerHost, () => {
     console.log('listening on http://' + httpServerHost + ':' + httpServerPort)
 });
+
+const jwtSecret = 'masterkey'
 
 let connectedClients = []
 
 io.on('connection', function (socket) {
     console.log('connected, new socket (' + socket.id + ')')
 
-    switch (socket.request.headers['x-client-type']) {
+    switch (socket.request.headers['x-client-type']) { // choose what kind of relation ship you want to have with the websocket server
         case 'console':
+            // verify if the JWT token provided is good
             console.log('socket with a console')
             console.log('console id: ' + socket.request.headers['x-console-id'])
             socket.join('console-' + socket.request.headers['x-console-id'])
@@ -34,6 +52,33 @@ io.on('connection', function (socket) {
             console.log('socket with the API')
             socket.join('api');
             break;
+
+        case 'desktop':
+            console.log('socket with a desktop client')
+            // verify with JWT and extract a id
+            // store the id in memory
+            let token = socket.request.headers.authorization.replace('Bearer ', '')
+            jwt.verify(
+                token,
+                jwtSecret, 
+                (err, decoded) => {
+                    if (err != null) {
+                        console.log('kicked a desktop client because of a invalid jwt')
+                        socket.disconnect()
+                    } else {
+                        console.log('success jwt validation with desktop client')
+                        console.log('login desktop token:', decoded.login_desktop_token)
+
+                        socket.join('desktop-' + decoded.login_desktop_token);
+                        connectedClients.push({
+                            consoleId: null,
+                            desktopToken: decoded.login_desktop_token,
+                            socketId: socket.id
+                        })
+                    }
+                });
+
+            break;
     }
 
     socket.on('disconnect', function () {
@@ -45,6 +90,50 @@ io.on('connection', function (socket) {
 });
 
 // API routes
+express.get('/', (req, res) => {
+    return res.json({
+        success: true,
+        service: {
+            organization: 'retrobox',
+            name: 'websocket-server'
+        }
+    })
+})
+
+express.post('/notify-desktop-login', (req, res) => {
+    jwt.verify(
+        req.headers.authorization.replace('Bearer ', ''),
+        jwtSecret, 
+        (err, decoded) => {
+            if (err != null) {
+                return res.status(401).json({success: false})
+            } else {
+                if (decoded.is_api !== true) {
+                    return res.status(403).json({success: false})
+                }
+                // search for the desktop token in connected client and pass it the usertoken
+                let loginDesktopToken = req.body.login_desktop_token
+                let userToken = req.body.user_token
+                console.log('received notification from api')
+                console.log(loginDesktopToken)
+                let desktopClient = connectedClients.filter(
+                    c => c.desktopToken === loginDesktopToken
+                )[0]
+                if (desktopClient != undefined) {
+                    let desktopClientSocket = io.sockets.sockets[desktopClient.socketId]
+                
+                    let result = desktopClientSocket.emit('desktop_login_finished', {
+                        finished: true,
+                        loginDesktopToken,
+                        userToken
+                    })
+                    res.json({
+                        success: true
+                    })
+                }
+            }
+        });
+})
 
 // if someone want to get the status of a console
 express.get('/connections', (req, res) => {
