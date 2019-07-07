@@ -28,5 +28,8 @@
     "jsonwebtoken": "^8.5.1",
     "socket.io": "^2.2.0",
     "uuid": "^3.3.2"
+  },
+  "devDependencies": {
+    "cross-env": "^5.2.0"
   }
 }
