@@ -1,0 +1,5 @@
+RewriteEngine On
+RewriteRule ^index.html$ http://localhost:3458/ [L,P]
+RewriteRule ^(.*)$ http://localhost:3458/$1 [L,P]
+
+
