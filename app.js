@@ -28,7 +28,7 @@ server.listen(httpServerPort, httpServerHost, () => {
     console.log('listening on http://' + httpServerHost + ':' + httpServerPort)
 });
 
-const jwtSecret = 'masterkey'
+const jwtSecret = process.env.JWT_KEY
 
 let connectedClients = []
 
