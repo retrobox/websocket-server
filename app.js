@@ -1,5 +1,4 @@
 const dotenv = require('dotenv')
-const uuid = require('uuid')
 dotenv.config()
 
 let httpServerHost = process.env.HOST !== undefined ? process.env.HOST : '0.0.0.0'
@@ -7,6 +6,10 @@ let httpServerPort = process.env.PORT !== undefined ? process.env.PORT : 3008
 
 const express = require('express')();
 const server = require('http').Server(express);
+const bodyParser = require('body-parser');
+const jwt = require('jsonwebtoken');
+const jwtSecret = process.env.JWT_KEY;
+const apiEndpoint = process.env.API_ENDPOINT || 'api.retrobox.tech';
 const io = require('socket.io')(server,  {
     handlePreflightRequest: function (req, res) {
       var headers = {
@@ -18,43 +21,88 @@ const io = require('socket.io')(server,  {
       res.end();
     }
   });
-const bodyParser = require('body-parser');
+const axios = require('axios');
 
-const jwt = require('jsonwebtoken');
+let connectedClients = []
 
 express.use(bodyParser.json());
 
 server.listen(httpServerPort, httpServerHost, () => {
-    console.log('listening on http://' + httpServerHost + ':' + httpServerPort)
+    console.log('> Listening on http://' + httpServerHost + ':' + httpServerPort)
 });
 
-const jwtSecret = process.env.JWT_KEY
+let verifyJwtApi = (token) => {
+    return new Promise(resolve => {
+        jwt.verify(
+            token,
+            jwtSecret, 
+            (err, decoded) => {
+                return resolve(err === null && decoded.isApi === true)
+            });
+    })
+}
 
-let connectedClients = []
+let apiAuthMiddleware = (req, res, next) => {
+    verifyJwtApi(req.headers.authorization.replace('Bearer ', '')).then(isValid => {
+        if (!isValid) {
+            return res.status(401).json({
+                success: false,
+                errors: ['api token unauthorized']
+            })
+        }
+        next()
+    })
+}
+
+function connectConsole(req, res) {
+    let sockets = connectedClients.filter(c => c.consoleId === req.params.id)
+    if (sockets.length === 0 || io.sockets.sockets[sockets[0].socketId] === undefined) {
+        return res.json({
+            success: false,
+            errors: ["Can't connect to the console"]
+        })
+    }    
+    return io.sockets.sockets[sockets[0].socketId]
+}
 
 io.on('connection', function (socket) {
-    console.log('connected, new socket (' + socket.id + ')')
+    console.log('> new socket (' + socket.id + ')')
 
     switch (socket.request.headers['x-client-type']) { // choose what kind of relation ship you want to have with the websocket server
         case 'console':
-            // verify if the JWT token provided is good
-            console.log('socket with a console')
-            console.log('console id: ' + socket.request.headers['x-console-id'])
-            socket.join('console-' + socket.request.headers['x-console-id'])
+            // verify console token
+            // make a request to the API, to verify the console overlay token
+            // reject the console if not authorized
+            let consoleId = socket.request.headers['x-console-id']
+            let consoleToken = socket.request.headers['x-console-token']
 
-            connectedClients.push({
-                consoleId: socket.request.headers['x-console-id'],
-                socketId: socket.id
+            console.log(`> Socket with a console overlay, id: ${consoleId}; token: ${consoleToken}`)
+
+            axios.post(apiEndpoint + '/console/verify', {
+                console_id: consoleId, console_token: consoleToken
+            }).then(res => {
+                console.log('> Success console id and token verification with the API')
+
+                socket.join('console-' + consoleId)
+
+                connectedClients.push({
+                    consoleId: consoleId,
+                    socketId: socket.id
+                })
+            }).catch(err => {
+                console.log('> Kicked a console overlay because of an invalid token or id')
+                socket.disconnect()
             })
             break;
 
         case 'api':
-            console.log('socket with the API')
+            // verify Authorization
+            console.log('> Socket with the API')
             socket.join('api');
             break;
 
         case 'desktop':
-            console.log('socket with a desktop client')
+            console.log('> Socket with a desktop client')
             // verify with JWT and extract a id
             // store the id in memory
             let token = socket.request.headers.authorization.replace('Bearer ', '')
@@ -63,11 +111,11 @@ io.on('connection', function (socket) {
                 jwtSecret, 
                 (err, decoded) => {
                     if (err != null) {
-                        console.log('kicked a desktop client because of a invalid jwt')
+                        console.log('> Kicked a desktop client because of a invalid jwt')
                         socket.disconnect()
                     } else {
-                        console.log('success jwt validation with desktop client')
-                        console.log('login desktop token:', decoded.login_desktop_token)
+                        console.log('> Success jwt validation with desktop client')
+                        console.log('> Login desktop token:', decoded.login_desktop_token)
 
                         socket.join('desktop-' + decoded.login_desktop_token);
                         connectedClients.push({
@@ -82,7 +130,7 @@ io.on('connection', function (socket) {
     }
 
     socket.on('disconnect', function () {
-        console.log('disconnected')
+        console.log('> Disconnected a socket')
         connectedClients = connectedClients.filter(client => {
             return client.socketId !== socket.id
         })
@@ -100,43 +148,31 @@ express.get('/', (req, res) => {
     })
 })
 
-express.post('/notify-desktop-login', (req, res) => {
-    jwt.verify(
-        req.headers.authorization.replace('Bearer ', ''),
-        jwtSecret, 
-        (err, decoded) => {
-            if (err != null) {
-                return res.status(401).json({success: false})
-            } else {
-                if (decoded.is_api !== true) {
-                    return res.status(403).json({success: false})
-                }
-                // search for the desktop token in connected client and pass it the usertoken
-                let loginDesktopToken = req.body.login_desktop_token
-                let userToken = req.body.user_token
-                console.log('received notification from api')
-                console.log(loginDesktopToken)
-                let desktopClient = connectedClients.filter(
-                    c => c.desktopToken === loginDesktopToken
-                )[0]
-                if (desktopClient != undefined) {
-                    let desktopClientSocket = io.sockets.sockets[desktopClient.socketId]
-                
-                    let result = desktopClientSocket.emit('desktop_login_finished', {
-                        finished: true,
-                        loginDesktopToken,
-                        userToken
-                    })
-                    res.json({
-                        success: true
-                    })
-                }
-            }
-        });
+express.post('/notify-desktop-login', apiAuthMiddleware, (req, res) => {
+    // search for the desktop token in connected client and pass it the usertoken
+    let loginDesktopToken = req.body.login_desktop_token
+    let userToken = req.body.user_token
+    console.log('> Received notification from api')        
+    let desktopClient = connectedClients.filter(
+        c => c.desktopToken === loginDesktopToken
+    )[0]
+    if (desktopClient != undefined) {
+        let desktopClientSocket = io.sockets.sockets[desktopClient.socketId]
+    
+        desktopClientSocket.emit('desktop_login_finished', {
+            finished: true,
+            loginDesktopToken,
+            userToken
+        })
+        res.json({
+            success: true
+        })
+    }
 })
 
 // if someone want to get the status of a console
-express.get('/connections', (req, res) => {
+// for these routes verify jwt for API type of client
+express.get('/connections', apiAuthMiddleware, (req, res) => {
     return res.json({
         success: true,
         data: connectedClients
@@ -150,26 +186,7 @@ express.get('/ping', (req, res) => {
     })
 })
 
-function connectConsole(req, res) {
-    let sockets = connectedClients.filter(c => c.consoleId === req.params.id)
-    if (sockets.length === 0) {
-        return res.json({
-            success: false,
-            errors: ['console not found or not connected at the time']
-        })
-    }
-    let socketId = sockets[0].socketId
-    // ???
-    if (io.sockets.sockets[socketId] === undefined) {
-        return res.json({
-            success: false,
-            errors: ['console not availaible at the time']
-        })
-    }
-    return io.sockets.sockets[socketId]
-}
-
-express.get('/console/:id', (req, res) => {
+express.get('/console/:id', apiAuthMiddleware, (req, res) => {
     // search for the console id in the list of connected client
     let socket = connectConsole(req, res)
 
