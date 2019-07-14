@@ -55,9 +55,9 @@ let apiAuthMiddleware = (req, res, next) => {
 }
 
 function connectConsole(req, res) {
-    let sockets = connectedClients.filter(c => c.consoleId === req.params.id)
+    let sockets = connectedClients.filter(c => c.type === 'console' && c.consoleId === req.params.id)
     if (sockets.length === 0 || io.sockets.sockets[sockets[0].socketId] === undefined) {
-        return res.json({
+        return res.status(400).json({
             success: false,
             errors: ["Can't connect to the console"]
         })
@@ -65,9 +65,31 @@ function connectConsole(req, res) {
     return io.sockets.sockets[sockets[0].socketId]
 }
 
+function updateWebClientConsoleStatus(client, isOnline) {
+    if (client.type === 'console') {
+        // search for a web client that own this console
+        let webClient = connectedClients.filter(c => c.type === 'web' && c.userId === client.userId)[0]
+        if (webClient !== undefined) {
+            let socket = io.sockets.sockets[webClient.socketId]
+            if (socket !== undefined) {
+                // emit the new console status to the web client
+                console.log('> update web console status')
+                socket.emit('console_status', {
+                    consoleId: client.consoleId,
+                    isOnline
+                })
+            }
+        }
+    }
+}
+
 io.on('connection', function (socket) {
     console.log('> new socket (' + socket.id + ')')
 
+    let token = null
+    if (socket.request.headers.authorization != undefined) {
+        token = socket.request.headers.authorization.replace('Bearer ', '')
+    }
     switch (socket.request.headers['x-client-type']) { // choose what kind of relation ship you want to have with the websocket server
         case 'console':
             // verify console token
@@ -85,27 +107,26 @@ io.on('connection', function (socket) {
 
                 socket.join('console-' + consoleId)
 
-                connectedClients.push({
+                let newClient = {
+                    type: 'console',
                     consoleId: consoleId,
+                    userId: res.data.data.user_id,
                     socketId: socket.id
-                })
+                }
+
+                updateWebClientConsoleStatus(newClient, true)
+
+                connectedClients.push(newClient)
             }).catch(err => {
                 console.log('> Kicked a console overlay because of an invalid token or id')
                 socket.disconnect()
             })
             break;
 
-        case 'api':
-            // verify Authorization
-            console.log('> Socket with the API')
-            socket.join('api');
-            break;
-
         case 'desktop':
             console.log('> Socket with a desktop client')
             // verify with JWT and extract a id
             // store the id in memory
-            let token = socket.request.headers.authorization.replace('Bearer ', '')
             jwt.verify(
                 token,
                 jwtSecret, 
@@ -119,18 +140,56 @@ io.on('connection', function (socket) {
 
                         socket.join('desktop-' + decoded.login_desktop_token);
                         connectedClients.push({
-                            consoleId: null,
+                            type: 'desktop',
                             desktopToken: decoded.login_desktop_token,
                             socketId: socket.id
                         })
                     }
                 });
-
             break;
+
+        case 'web':
+            console.log('> Socket with a web client')
+            jwt.verify(
+                token,
+                jwtSecret, 
+                (err, decoded) => {
+                    if (err != null) {
+                        console.log('> Kicked a web client because of a invalid jwt')
+                        socket.disconnect()
+                    } else {
+                        console.log('> Success jwt validation with web client, userId: ' + decoded.user.id)
+
+                        // remove similar web client
+                        connectedClients = connectedClients.filter(c => {
+                            return !(c.type === "web" && c.userId === decoded.user.id)
+                        })
+                        
+                        connectedClients.push({
+                            type: 'web',
+                            userId: decoded.user.id,
+                            socketId: socket.id
+                        })
+                    }
+                });
+            break;
+
+        default:
+            console.log('> Kicked a socket connexion (no auth provided)')
+            socket.disconnect()
     }
 
     socket.on('disconnect', function () {
         console.log('> Disconnected a socket')
+        let client = connectedClients.filter(client => {
+            return client.socketId === socket.id
+        })[0]
+
+        if (client !== undefined) {
+            updateWebClientConsoleStatus(client, false)
+        }
+
+        // remove client from the list of connected clients
         connectedClients = connectedClients.filter(client => {
             return client.socketId !== socket.id
         })
@@ -154,7 +213,7 @@ express.post('/notify-desktop-login', apiAuthMiddleware, (req, res) => {
     let userToken = req.body.user_token
     console.log('> Received notification from api')        
     let desktopClient = connectedClients.filter(
-        c => c.desktopToken === loginDesktopToken
+        c => c.type === 'desktop' && c.desktopToken === loginDesktopToken
     )[0]
     if (desktopClient != undefined) {
         let desktopClientSocket = io.sockets.sockets[desktopClient.socketId]
@@ -200,7 +259,7 @@ express.get('/console/:id', apiAuthMiddleware, (req, res) => {
     })
 });
 
-express.get('/console/:id/ping', (req, res) => {
+express.get('/console/:id/ping', apiAuthMiddleware, (req, res) => {
     let socket = connectConsole(req, res)
     socket.emit('ping-check', (data) => {
         // wait for a response
@@ -211,18 +270,20 @@ express.get('/console/:id/ping', (req, res) => {
     })
 });
 
-express.get('/console/:id/shutdown', (req, res) => {
+express.get('/console/:id/shutdown', apiAuthMiddleware, (req, res) => {
     let socket = connectConsole(req, res)
-    socket.emit('shutdown')
-    return res.json({
-        success: true
+    socket.emit('shutdown', () => {
+        return res.json({
+            success: true
+        })
     })
 });
 
-express.get('/console/:id/reboot', (req, res) => {
+express.get('/console/:id/reboot', apiAuthMiddleware, (req, res) => {
     let socket = connectConsole(req, res)
-    socket.emit('reboot')
-    return res.json({
-        success: true
+    socket.emit('reboot', () => {
+        return res.json({
+            success: true
+        })
     })
 });
