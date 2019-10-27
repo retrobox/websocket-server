@@ -184,6 +184,7 @@ io.on('connection', function (socket) {
         let client = connectedClients.filter(client => {
             return client.socketId === socket.id
         })[0]
+        console.log("> Client disconnected:", client)
 
         if (client !== undefined) {
             updateWebClientConsoleStatus(client, false)
