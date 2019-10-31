@@ -37,19 +37,23 @@ let verifyJwtApi = (token) => {
             token,
             jwtSecret, 
             (err, decoded) => {
-                return resolve(err === null && decoded.isApi === true)
+                return resolve({
+                    isValid: err === null && decoded.isApi === true,
+                    decoded
+                })
             });
     })
 }
 
 let apiAuthMiddleware = (req, res, next) => {
-    verifyJwtApi(req.headers.authorization.replace('Bearer ', '')).then(isValid => {
-        if (!isValid) {
+    verifyJwtApi(req.headers.authorization.replace('Bearer ', '')).then(data => {
+        if (!data.isValid) {
             return res.status(401).json({
                 success: false,
                 errors: ['api token unauthorized']
             })
         }
+        req.decoded = data.decoded
         next()
     })
 }
@@ -62,6 +66,23 @@ function connectConsole(req, res) {
             errors: ["Can't connect to the console"]
         })
     }    
+    return io.sockets.sockets[sockets[0].socketId]
+}
+
+function connectWeb(req, res) {
+    if (req.headers['x-web-session'] === undefined) {
+        return res.json({
+            success: false,
+            errors: ["X-Web-Session header not provided"]
+        })
+    }
+    let sockets = connectedClients.filter(c => c.type === 'web' && c.socketId === req.headers['x-web-session'])
+    if (sockets.length === 0 || io.sockets.sockets[sockets[0].socketId] === undefined) {
+        return res.status(400).json({
+            success: false,
+            errors: ["Can't connect to the web client"]
+        })
+    }
     return io.sockets.sockets[sockets[0].socketId]
 }
 
@@ -170,6 +191,8 @@ io.on('connection', function (socket) {
                             userId: decoded.user.id,
                             socketId: socket.id
                         })
+
+                        socket.emit('socket-id', socket.id)
                     }
                 });
             break;
@@ -190,7 +213,7 @@ io.on('connection', function (socket) {
             updateWebClientConsoleStatus(client, false)
         }
 
-        // remove client from the list of connected clients
+        // 7emove client from the list of connected clients
         connectedClients = connectedClients.filter(client => {
             return client.socketId !== socket.id
         })
@@ -285,6 +308,30 @@ express.get('/console/:id/reboot', apiAuthMiddleware, (req, res) => {
     socket.emit('reboot', () => {
         return res.json({
             success: true
+        })
+    })
+});
+
+express.get('/console/:id/open-ssh-session', apiAuthMiddleware, (req, res) => {
+    let socket = connectConsole(req, res)
+
+    console.log('> SSH: ask for opening')
+    socket.emit('open-ssh-session', (data) => {
+        let webSessionSocket = connectWeb(req, res)
+        console.log('> SSH: response received', data)
+        res.json({
+            success: true,
+            data
+        })
+        socket.removeAllListeners('gotty-installed')
+        socket.removeAllListeners('ssh-opened')
+        socket.on('gotty-installed', () => {
+            console.log('Gotty installed')
+            webSessionSocket.emit('gotty-installed')
+        })
+        socket.on('ssh-opened', url => {
+            console.log('SSH Opened', url)
+            webSessionSocket.emit('ssh-opened', url)
         })
     })
 });
