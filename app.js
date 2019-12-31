@@ -24,6 +24,7 @@ const io = require('socket.io')(server,  {
 const axios = require('axios');
 
 let connectedClients = []
+let terminalSessions = []
 
 express.use(bodyParser.json());
 
@@ -58,15 +59,24 @@ let apiAuthMiddleware = (req, res, next) => {
     })
 }
 
+
+function getConsoleSocket(consoleId, userId = null) {
+    let sockets = connectedClients.filter(c => c.type === 'console' && c.consoleId === consoleId && userId === null ? true : c.userId === userId)
+    if (sockets.length === 0 || io.sockets.sockets[sockets[0].socketId] === undefined)
+        return null
+    return io.sockets.sockets[sockets[0].socketId]
+}
+
+
 function connectConsole(req, res) {
-    let sockets = connectedClients.filter(c => c.type === 'console' && c.consoleId === req.params.id)
-    if (sockets.length === 0 || io.sockets.sockets[sockets[0].socketId] === undefined) {
+    let consoleSocket = getConsoleSocket(req.params.id)
+    if (consoleSocket === null) {
         return res.status(400).json({
             success: false,
             errors: ["Can't connect to the console"]
         })
-    }    
-    return io.sockets.sockets[sockets[0].socketId]
+    }
+    return consoleSocket
 }
 
 function connectWeb(req, res) {
@@ -95,7 +105,7 @@ function updateWebClientConsoleStatus(client, isOnline) {
             if (socket !== undefined) {
                 // emit the new console status to the web client
                 console.log('> update web console status')
-                socket.emit('console_status', {
+                socket.emit('console-status', {
                     consoleId: client.consoleId,
                     isOnline
                 })
@@ -132,11 +142,12 @@ io.on('connection', function (socket) {
                     type: 'console',
                     consoleId: consoleId,
                     userId: res.data.data.user_id,
-                    socketId: socket.id
+                    socketId: socket.id,
+                    socket
                 }
 
                 updateWebClientConsoleStatus(newClient, true)
-
+                
                 connectedClients.push(newClient)
             }).catch(err => {
                 console.log('> Kicked a console overlay because of an invalid token or id')
@@ -193,6 +204,52 @@ io.on('connection', function (socket) {
                         })
 
                         socket.emit('socket-id', socket.id)
+
+                        socket.on('open-terminal', consoleObject => {
+                            // a web client want to open a terminal with a specific console id
+
+                            // so we look for the console id and that is owned by this user
+                            let consolesTerminal = connectedClients
+                                .filter(client => client.type === 'console' &&
+                                            client.userId === decoded.user.id &&
+                                            client.consoleId === consoleObject.id)
+                            if (consolesTerminal.length === 0) {
+                                console.log('A client tried to open a terminal with a unknown, offline or forbidden console')
+                            }
+                            
+                            console.log(`> Open terminal from ${decoded.user.id} : ${socket.id} for console ${consoleObject.id}...`)
+                            let consoleSocket = getConsoleSocket(consoleObject.id, decoded.user.id)
+
+                            if (consoleSocket === null) {
+                                console.log("> Can't open terminal session because the console socket is not found")
+                            }
+                            // notify the console, that a terminal session is opened
+                            consoleSocket.emit('open-terminal-session', data => {
+                                console.log('> The console acknowledged that a terminal session is opened', data)
+                                // TODO: verify if a similar terminal session exists and replace the old session with the new
+                                terminalSessions.push({
+                                    webSocketId: socket.id,
+                                    consoleId: consoleObject.id,
+                                    userId: decoded.user.id
+                                })
+                                socket.emit('terminal-ready')
+                            })
+
+                            // forward terminal output to the web socket
+                            consoleSocket.on('terminal-output', data => {
+                                socket.emit('terminal-output', data)
+                            })
+                        })
+
+                        socket.on('terminal-input', terminalInputObject => {
+                            getConsoleSocket(terminalInputObject.consoleId, decoded.user.id)
+                                .emit('terminal-input', terminalInputObject.data)
+                        })
+                        socket.on('terminal-resize', terminalResizeObject => {
+                            console.log(terminalResizeObject)
+                            getConsoleSocket(terminalResizeObject.consoleId, decoded.user.id)
+                                .emit('terminal-resize', terminalResizeObject.data)
+                        })
                     }
                 });
             break;
@@ -207,13 +264,30 @@ io.on('connection', function (socket) {
         let client = connectedClients.filter(client => {
             return client.socketId === socket.id
         })[0]
+
+        if (client !== undefined && client.socket !== undefined) {
+            client.socket = { hidden: true, socket: { hiddenObject: client.socket } }
+        }
         console.log("> Client disconnected:", client)
 
         if (client !== undefined) {
             updateWebClientConsoleStatus(client, false)
+
+            if (client.type === 'web') {
+                // verify if that web client hold terminal session
+                let sessions = terminalSessions.filter(session => session.webSocketId === socket.id)
+                if (sessions[0] !== undefined) {
+                    // notify console that a client doesn't want him anymore. It's very sad...
+                    let consoleSocket = getConsoleSocket(sessions[0].consoleId, sessions[0].userId)
+                    console.log('> Closed a terminal session because of a web client')
+                    if (consoleSocket !== null) {
+                        consoleSocket.emit('close-terminal-session')
+                    }
+                }
+            }
         }
 
-        // 7emove client from the list of connected clients
+        // Remove client from the list of connected clients
         connectedClients = connectedClients.filter(client => {
             return client.socketId !== socket.id
         })
