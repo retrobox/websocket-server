@@ -205,51 +205,64 @@ io.on('connection', function (socket) {
 
                         socket.emit('socket-id', socket.id)
 
-                        socket.on('open-terminal', consoleObject => {
-                            // a web client want to open a terminal with a specific console id
+                        // socket.on('open-terminal', consoleObject => {
+                        //     // a web client want to open a terminal with a specific console id
 
-                            // so we look for the console id and that is owned by this user
-                            let consolesTerminal = connectedClients
-                                .filter(client => client.type === 'console' &&
-                                            client.userId === decoded.user.id &&
-                                            client.consoleId === consoleObject.id)
-                            if (consolesTerminal.length === 0) {
-                                console.log('A client tried to open a terminal with a unknown, offline or forbidden console')
-                            }
+                        //     // remove trash in terminal sessions
+                        //     terminalSessions = terminalSessions.filter(session => {
+                        //         return io.sockets.sockets[session.webSocketId] !== undefined && connectedClients.filter(c => session.consoleId === c.consoleId).length > 0
+                        //     })
+
+                        //     // so we look for the console id and that is owned by this user
+                        //     let consolesTerminal = connectedClients
+                        //         .filter(client => client.type === 'console' &&
+                        //                     client.userId === decoded.user.id &&
+                        //                     client.consoleId === consoleObject.id)
+                        //     if (consolesTerminal.length === 0) {
+                        //         console.log('A client tried to open a terminal with a unknown, offline or forbidden console')
+                        //     }
                             
-                            console.log(`> Open terminal from ${decoded.user.id} : ${socket.id} for console ${consoleObject.id}...`)
-                            let consoleSocket = getConsoleSocket(consoleObject.id, decoded.user.id)
+                        //     console.log(`> Open terminal from ${decoded.user.id} : ${socket.id} for console ${consoleObject.id}...`)
+                        //     let consoleSocket = getConsoleSocket(consoleObject.id, decoded.user.id)
 
-                            if (consoleSocket === null) {
-                                console.log("> Can't open terminal session because the console socket is not found")
-                            }
-                            // notify the console, that a terminal session is opened
-                            consoleSocket.emit('open-terminal-session', data => {
-                                console.log('> The console acknowledged that a terminal session is opened', data)
-                                // TODO: verify if a similar terminal session exists and replace the old session with the new
-                                terminalSessions.push({
-                                    webSocketId: socket.id,
-                                    consoleId: consoleObject.id,
-                                    userId: decoded.user.id
-                                })
-                                socket.emit('terminal-ready')
-                            })
+                        //     if (consoleSocket === null) {
+                        //         console.log("> Can't open terminal session because the console socket is not found")
+                        //     }
+                        //     // notify the console, that a terminal session is opened
+                        //     console.log(connectedClients, terminalSessions)
 
-                            // forward terminal output to the web socket
-                            consoleSocket.on('terminal-output', data => {
-                                socket.emit('terminal-output', data)
-                            })
-                        })
+                        //     /**
+                        //      * (data) => {
+                        //         console.log('> The console acknowledged that a terminal session is opened', data)
+                        //         // TODO: verify if a similar terminal session exists and replace the old session with the new
+                        //         terminalSessions.push({
+                        //             webSocketId: socket.id,
+                        //             consoleId: consoleObject.id,
+                        //             userId: decoded.user.id
+                        //         })
+                        //         socket.emit('terminal-ready')
+                        //     }
+                        //      */
+                        //     consoleSocket.send('open-terminal-session', {data: {}})
+                        //     // consoleSocket.emit('ping-check', () => {
+                        //     //     console.log('=== pong ===')
+                        //     // })
 
-                        socket.on('terminal-input', terminalInputObject => {
-                            getConsoleSocket(terminalInputObject.consoleId, decoded.user.id)
-                                .emit('terminal-input', terminalInputObject.data)
-                        })
-                        socket.on('terminal-resize', terminalResizeObject => {
-                            console.log(terminalResizeObject)
-                            getConsoleSocket(terminalResizeObject.consoleId, decoded.user.id)
-                                .emit('terminal-resize', terminalResizeObject.data)
-                        })
+                        //     // forward terminal output to the web socket
+                        //     // consoleSocket.on('terminal-output', (data) => {
+                        //     //     socket.emit('terminal-output', data)
+                        //     // })
+                        // })
+
+                        // socket.on('terminal-input', terminalInputObject => {
+                        //     getConsoleSocket(terminalInputObject.consoleId, decoded.user.id)
+                        //         .emit('terminal-input', terminalInputObject.data)
+                        // })
+                        // socket.on('terminal-resize', terminalResizeObject => {
+                        //     console.log(terminalResizeObject)
+                        //     getConsoleSocket(terminalResizeObject.consoleId, decoded.user.id)
+                        //         .emit('terminal-resize', terminalResizeObject.data)
+                        // })
                     }
                 });
             break;
@@ -279,19 +292,29 @@ io.on('connection', function (socket) {
                 if (sessions[0] !== undefined) {
                     // notify console that a client doesn't want him anymore. It's very sad...
                     let consoleSocket = getConsoleSocket(sessions[0].consoleId, sessions[0].userId)
+                    terminalSessions = terminalSessions.filter(session => session.webSocketId !== socket.id)
                     console.log('> Closed a terminal session because of a web client')
                     if (consoleSocket !== null) {
                         consoleSocket.emit('close-terminal-session')
                     }
                 }
             }
+            if (client.type === 'console') {
+                terminalSessions = terminalSessions.filter(session => session.consoleId !== client.consoleId)
+            }
         }
+
+        console.log('Terminal Sessions afer disconnect event: ', terminalSessions)
 
         // Remove client from the list of connected clients
         connectedClients = connectedClients.filter(client => {
             return client.socketId !== socket.id
         })
     });
+
+    socket.on('error', err => {
+        console.log('> ERR: on socket', err)
+    })
 });
 
 // API routes
@@ -386,26 +409,69 @@ express.get('/console/:id/reboot', apiAuthMiddleware, (req, res) => {
     })
 });
 
-express.get('/console/:id/open-ssh-session', apiAuthMiddleware, (req, res) => {
-    let socket = connectConsole(req, res)
-
-    console.log('> SSH: ask for opening')
-    socket.emit('open-ssh-session', (data) => {
+express.get('/console/:id/open-terminal-session', apiAuthMiddleware, (req, res) => {
+    let consoleSocket = connectConsole(req, res)
+    console.log(req.headers)
+    let userId = req.headers['x-user-id']
+    let consoleId = req.params.id
+    console.log('> Terminal: ask for opening')
+    consoleSocket.emit('open-terminal-session', (data) => {
         let webSessionSocket = connectWeb(req, res)
-        console.log('> SSH: response received', data)
+        console.log('> Terminal: response received', data)
         res.json({
             success: true,
             data
         })
-        socket.removeAllListeners('gotty-installed')
-        socket.removeAllListeners('ssh-opened')
-        socket.on('gotty-installed', () => {
-            console.log('Gotty installed')
-            webSessionSocket.emit('gotty-installed')
+        // a web client want to open a terminal with a specific console id
+
+        // remove trash in terminal sessions
+        terminalSessions = terminalSessions.filter(session => {
+            return io.sockets.sockets[session.webSocketId] !== undefined &&
+            connectedClients.filter(c => session.consoleId === c.consoleId).length > 0
         })
-        socket.on('ssh-opened', url => {
-            console.log('SSH Opened', url)
-            webSessionSocket.emit('ssh-opened', url)
+        webSessionSocket.removeAllListeners('terminal-input')
+        webSessionSocket.removeAllListeners('terminal-resize')
+
+        console.log('> The console acknowledged that a terminal session is opened', data)
+        // TODO: verify if a similar terminal session exists and replace the old session with the new
+
+        // so we look for the console id and that is owned by this user
+        let consolesTerminal = connectedClients
+            .filter(client => client.type === 'console' &&
+                        client.userId === userId &&
+                        client.consoleId === consoleId)
+        if (consolesTerminal.length === 0) {
+            console.log('A client tried to open a terminal with a unknown, offline or forbidden console')
+        }
+        
+        console.log(`> Open terminal from ${userId} : ${webSessionSocket.id} for console ${consoleId}...`)
+        let consoleSocket = getConsoleSocket(consoleId, userId)
+
+        if (consoleSocket === null) {
+            console.log("> Can't open terminal session because the console socket is not found")
+        }
+        // notify the console, that a terminal session is opened
+
+        terminalSessions.push({
+            webSocketId: webSessionSocket.id,
+            consoleId,
+            userId
+        })
+        console.log(connectedClients, terminalSessions)
+        webSessionSocket.emit('terminal-ready')
+
+        // forward terminal output to the web socket
+        consoleSocket.on('terminal-output', (data) => {
+            webSessionSocket.emit('terminal-output', data)
+        })
+
+        webSessionSocket.on('terminal-input', terminalInputObject => {
+            console.log('terminal input', terminalInputObject)
+            consoleSocket.emit('terminal-input', terminalInputObject.data)
+        })
+        webSessionSocket.on('terminal-resize', terminalResizeObject => {
+            console.log(terminalResizeObject)
+            consoleSocket.emit('terminal-resize', terminalResizeObject.data)
         })
     })
 });
