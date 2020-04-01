@@ -61,7 +61,9 @@ let apiAuthMiddleware = (req, res, next) => {
 
 
 function getConsoleSocket(consoleId, userId = null) {
-    let sockets = connectedClients.filter(c => c.type === 'console' && c.consoleId === consoleId && userId === null ? true : c.userId === userId)
+    let sockets = connectedClients.filter(c => 
+        c.type === 'console' && c.consoleId === consoleId && (userId === null ? true : c.userId === userId)
+    )
     if (sockets.length === 0 || io.sockets.sockets[sockets[0].socketId] === undefined)
         return null
     return io.sockets.sockets[sockets[0].socketId]
@@ -411,7 +413,6 @@ express.get('/console/:id/reboot', apiAuthMiddleware, (req, res) => {
 
 express.get('/console/:id/open-terminal-session', apiAuthMiddleware, (req, res) => {
     let consoleSocket = connectConsole(req, res)
-    console.log(req.headers)
     let userId = req.headers['x-user-id']
     let consoleId = req.params.id
     console.log('> Terminal: ask for opening')
@@ -431,8 +432,8 @@ express.get('/console/:id/open-terminal-session', apiAuthMiddleware, (req, res) 
         })
         webSessionSocket.removeAllListeners('terminal-input')
         webSessionSocket.removeAllListeners('terminal-resize')
-
-        console.log('> The console acknowledged that a terminal session is opened', data)
+        
+        console.log('> Terminal: The console acknowledged that a terminal session is opened', data)
         // TODO: verify if a similar terminal session exists and replace the old session with the new
 
         // so we look for the console id and that is owned by this user
@@ -441,37 +442,32 @@ express.get('/console/:id/open-terminal-session', apiAuthMiddleware, (req, res) 
                         client.userId === userId &&
                         client.consoleId === consoleId)
         if (consolesTerminal.length === 0) {
-            console.log('A client tried to open a terminal with a unknown, offline or forbidden console')
+            console.log('> Terminal: A client tried to open a terminal with a unknown, offline or forbidden console')
         }
-        
-        console.log(`> Open terminal from ${userId} : ${webSessionSocket.id} for console ${consoleId}...`)
-        let consoleSocket = getConsoleSocket(consoleId, userId)
 
         if (consoleSocket === null) {
-            console.log("> Can't open terminal session because the console socket is not found")
+            console.log("> Terminal: Can't open terminal session because the console socket is not found")
         }
-        // notify the console, that a terminal session is opened
+
+        // forward terminal output to the web socket
+        consoleSocket.on('terminal-output', data => {
+            webSessionSocket.emit('terminal-output', data)
+        })
+
+        webSessionSocket.on('terminal-input', terminalInputObject => {
+            consoleSocket.emit('terminal-input', terminalInputObject.data)
+        })
+        webSessionSocket.on('terminal-resize', terminalResizeObject => {
+            consoleSocket.emit('terminal-resize', terminalResizeObject.data)
+        })
 
         terminalSessions.push({
             webSocketId: webSessionSocket.id,
             consoleId,
             userId
         })
-        console.log(connectedClients, terminalSessions)
         webSessionSocket.emit('terminal-ready')
 
-        // forward terminal output to the web socket
-        consoleSocket.on('terminal-output', (data) => {
-            webSessionSocket.emit('terminal-output', data)
-        })
-
-        webSessionSocket.on('terminal-input', terminalInputObject => {
-            console.log('terminal input', terminalInputObject)
-            consoleSocket.emit('terminal-input', terminalInputObject.data)
-        })
-        webSessionSocket.on('terminal-resize', terminalResizeObject => {
-            console.log(terminalResizeObject)
-            consoleSocket.emit('terminal-resize', terminalResizeObject.data)
-        })
+        console.log(`> Terminal: Opened terminal from ${userId} : ${webSessionSocket.id} for console ${consoleId}...`)
     })
 });
