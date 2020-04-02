@@ -432,6 +432,8 @@ express.get('/console/:id/open-terminal-session', apiAuthMiddleware, (req, res) 
         })
         webSessionSocket.removeAllListeners('terminal-input')
         webSessionSocket.removeAllListeners('terminal-resize')
+        consoleSocket.removeAllListeners('terminal-output')
+        consoleSocket.removeAllListeners('terminal-exit')
         
         console.log('> Terminal: The console acknowledged that a terminal session is opened', data)
         // TODO: verify if a similar terminal session exists and replace the old session with the new
@@ -452,6 +454,15 @@ express.get('/console/:id/open-terminal-session', apiAuthMiddleware, (req, res) 
         // forward terminal output to the web socket
         consoleSocket.on('terminal-output', data => {
             webSessionSocket.emit('terminal-output', data)
+        })
+        consoleSocket.on('terminal-exit', data => {
+            webSessionSocket.emit('terminal-exit', data)
+            // the console will already close the terminal session but we need to remove this session from the list
+            terminalSessions = terminalSessions.filter(session => !(
+                session.userId === userId &&
+                session.consoleId === consoleId
+            ))
+            console.log('terminal session after terminal exit', terminalSessions)
         })
 
         webSessionSocket.on('terminal-input', terminalInputObject => {
