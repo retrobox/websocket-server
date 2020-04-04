@@ -411,6 +411,15 @@ express.get('/console/:id/reboot', apiAuthMiddleware, (req, res) => {
     })
 });
 
+express.get('/console/:id/kill-overlay', apiAuthMiddleware, (req, res) => {
+    let socket = connectConsole(req, res)
+    socket.emit('self-kill', () => {
+        return res.json({
+            success: true
+        })
+    })
+});
+
 express.get('/console/:id/open-terminal-session', apiAuthMiddleware, (req, res) => {
     let consoleSocket = connectConsole(req, res)
     let userId = req.headers['x-user-id']
