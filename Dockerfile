@@ -4,6 +4,7 @@ ADD . /app
 
 EXPOSE 80
 
+WORKDIR /app
 RUN npm i 
 
 ENV HOST 0.0.0.0
