@@ -1,6 +1,7 @@
-# websocket server
+# The websocket server
 
-The web socket server of the retrobox project.
+![Continuous integration](https://github.com/retrobox/websocket-server/workflows/Continuous%20integration/badge.svg)
+
 
 It will be used as a master for controlling all of the consoles connected.
 
@@ -23,3 +24,6 @@ It will host an private API, this API can be called by the main web retrobox API
 
 and mores...
 
+## Docker image
+
+- `retrobox/websocket-server`, get image [here](https://hub.docker.com/repository/docker/retrobox/websocket-server).
