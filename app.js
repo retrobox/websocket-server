@@ -36,7 +36,7 @@ let verifyJwtApi = (token) => {
     return new Promise(resolve => {
         jwt.verify(
             token,
-            jwtSecret, 
+            jwtSecret,
             (err, decoded) => {
                 return resolve({
                     isValid: err === null && decoded.isApi === true,
@@ -47,6 +47,12 @@ let verifyJwtApi = (token) => {
 }
 
 let apiAuthMiddleware = (req, res, next) => {
+    if (!req.headers.authorization) {
+        return res.status(401).json({
+            success: false,
+            errors: ['api token required']
+        })
+    }
     verifyJwtApi(req.headers.authorization.replace('Bearer ', '')).then(data => {
         if (!data.isValid) {
             return res.status(401).json({
@@ -147,6 +153,8 @@ io.on('connection', function (socket) {
                     socketId: socket.id,
                     socket
                 }
+
+                //socket.emit('hello-world')
 
                 updateWebClientConsoleStatus(newClient, true)
                 
